@@ -222,9 +222,16 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
       }
     }
 
-    // Hold navigations until hydration settles to avoid freezes
+    // Hold popstate navigations until hydration settles to avoid freezes
     // the old page on screen when navigating during hydration
     if (import.meta.client && nuxtApp.isHydrating && nuxtApp.payload.serverRendered) {
+      // `history.listen` fires synchronously inside vue-router's popstate handler, before
+      // the navigation's guards — a window `popstate` listener would be too late
+      let fromPopstate = false
+      const stopListen = history.listen(() => {
+        fromPopstate = true
+      })
+
       let isHydrated = false
       const hydrated = new Promise<void>((resolve) => {
         const stops = [
@@ -233,13 +240,18 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
         ]
         function done () {
           for (const stop of stops) { stop() }
+          stopListen()
           isHydrated = true
           resolve()
         }
       })
 
+      // only held popstate navigations, as like `await navigateTo()`
+      // in a hydrating setup would deadlock its own suspense
       router.beforeEach(async () => {
-        if (!isHydrated) {
+        const held = fromPopstate
+        fromPopstate = false
+        if (held && !isHydrated) {
           await hydrated
         }
       })
