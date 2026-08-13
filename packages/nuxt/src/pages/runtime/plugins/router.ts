@@ -222,6 +222,29 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
       }
     }
 
+    // Hold navigations until hydration settles to avoid freezes
+    // the old page on screen when navigating during hydration
+    if (import.meta.client && nuxtApp.isHydrating && nuxtApp.payload.serverRendered) {
+      let isHydrated = false
+      const hydrated = new Promise<void>((resolve) => {
+        const stops = [
+          nuxtApp.hooks.hookOnce('app:suspense:resolve', done),
+          nuxtApp.hooks.hookOnce('app:error', done),
+        ]
+        function done () {
+          for (const stop of stops) { stop() }
+          isHydrated = true
+          resolve()
+        }
+      })
+
+      router.beforeEach(async () => {
+        if (!isHydrated) {
+          await hydrated
+        }
+      })
+    }
+
     // Routes served under a `noScripts` route rule must be loaded as full
     // documents: a client-side navigation would render them with (and keep
     // alive) the JavaScript they are meant to be served without
