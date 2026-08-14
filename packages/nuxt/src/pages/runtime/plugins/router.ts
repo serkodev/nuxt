@@ -228,34 +228,47 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
       nuxtApp.hooks.hookOnce('app:beforeMount', () => {
         if (!nuxtApp.payload.serverRendered || !nuxtApp.isHydrating) { return }
 
-        let fromPopstate = false
-        const stopListen = history.listen(() => {
-          fromPopstate = true
-        })
+        // to avoid an aborted popstate (or a concurrent programmatic push) leak the hold
+        let popstateTarget: string | undefined
 
-        let isHydrated = false
+        const stops: Array<() => void> = []
+
         const hydrated = new Promise<void>((resolve) => {
-          const stops = [
-            nuxtApp.hooks.hookOnce('app:suspense:resolve', done),
-            nuxtApp.hooks.hookOnce('app:error', done),
-          ]
           function done () {
+            popstateTarget = undefined
             for (const stop of stops) { stop() }
-            stopListen()
-            isHydrated = true
             resolve()
           }
+          stops.push(
+            nuxtApp.hooks.hookOnce('app:suspense:resolve', done),
+            nuxtApp.hooks.hookOnce('app:error', done),
+          )
         })
 
-        // only held popstate navigations, as like `await navigateTo()`
-        // in a hydrating setup would deadlock its own suspense
-        router.beforeEach(async () => {
-          const held = fromPopstate
-          fromPopstate = false
-          if (held && !isHydrated) {
+        stops.push(
+          history.listen((to) => {
+            popstateTarget = to
+          }),
+          // clear the mark once a matching navigation finishes or fails
+          router.afterEach((to) => {
+            if (to.fullPath === popstateTarget) {
+              popstateTarget = undefined
+            }
+          }),
+          router.onError((_error, to) => {
+            if (to.fullPath === popstateTarget) {
+              popstateTarget = undefined
+            }
+          }),
+
+          // only popstate navigations are held, as like `await navigateTo()`
+          // in a hydrating setup would deadlock its own suspense
+          router.beforeEach(async (to) => {
+            if (popstateTarget === undefined || to.fullPath !== popstateTarget) { return }
+            popstateTarget = undefined
             await hydrated
-          }
-        })
+          }),
+        )
       })
     }
 
