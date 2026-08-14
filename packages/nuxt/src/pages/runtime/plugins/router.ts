@@ -231,6 +231,11 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
         // to avoid an aborted popstate (or a concurrent programmatic push) leak the hold
         let popstateTarget: string | undefined
 
+        function matchesPopstate (to: { fullPath: string, redirectedFrom?: { fullPath: string } }) {
+          return popstateTarget !== undefined
+            && (to.fullPath === popstateTarget || to.redirectedFrom?.fullPath === popstateTarget)
+        }
+
         const stops: Array<() => void> = []
 
         const hydrated = new Promise<void>((resolve) => {
@@ -251,12 +256,12 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
           }),
           // clear the mark once a matching navigation finishes or fails
           router.afterEach((to) => {
-            if (to.fullPath === popstateTarget) {
+            if (matchesPopstate(to)) {
               popstateTarget = undefined
             }
           }),
           router.onError((_error, to) => {
-            if (to.fullPath === popstateTarget) {
+            if (matchesPopstate(to)) {
               popstateTarget = undefined
             }
           }),
@@ -264,7 +269,7 @@ const plugin: Plugin<{ router: Router }> = defineNuxtPlugin({
           // only popstate navigations are held, as like `await navigateTo()`
           // in a hydrating setup would deadlock its own suspense
           router.beforeEach(async (to) => {
-            if (popstateTarget === undefined || to.fullPath !== popstateTarget) { return }
+            if (!matchesPopstate(to)) { return }
             popstateTarget = undefined
             await hydrated
           }),
